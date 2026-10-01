@@ -32,7 +32,7 @@
     if (m) { const u = decodeURIComponent(m[1]); return { key: u, urls: fileUrls(u) }; }
     m = t.match(/\/d\/([\w-]+)/) || t.match(/[?&]id=([\w-]+)/) || (/^[\w-]{25,}$/.test(t) ? [0, t] : null);
     if (m) return { key: m[1], urls: driveUrls(m[1]), drive: true };
-    if (/\.(mp3|m4a|aac|wav|ogg|opus|flac)(\?.*)?$/i.test(t)) return { key: t, urls: fileUrls(t) };
+    if (/\.(mp3|m4a|aac|wav|ogg|opus|flac|mpeg)(\?.*)?$/i.test(t)) return { key: t, urls: fileUrls(t) };
     return null;
   }
   const A = new Audio(); A.preload = "auto";
