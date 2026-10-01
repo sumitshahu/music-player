@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QR Music Player</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<style>
+  :root { --navy:#14213d; --muted:#5b6478; --line:#d9deea; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:#fff; color:var(--navy); display:flex; justify-content:center; padding:24px; }
+  main { width:100%; max-width:440px; text-align:center; }
+  h1 { font-size:1.4rem; margin:8px 0 4px; }
+  p { color:var(--muted); font-size:.92rem; line-height:1.5; }
+  input { width:100%; padding:12px; border:1px solid var(--line); border-radius:8px; font-size:1rem; margin:10px 0; color:var(--navy); }
+  button, a.btn { display:inline-block; background:var(--navy); color:#fff; border:0; border-radius:8px; padding:12px 22px; font-size:1rem; cursor:pointer; text-decoration:none; }
+  .ghost { background:#fff !important; color:var(--navy) !important; border:1px solid var(--navy) !important; }
+  #qr { display:flex; justify-content:center; margin:20px 0 10px; }
+  .hidden { display:none; }
+  .link { word-break:break-all; font-size:.8rem; }
+  #reader { width:100%; margin:16px 0; border-radius:10px; overflow:hidden; }
+  #nowplaying { font-weight:600; min-height:1.4em; }
+  audio { width:100%; margin-top:10px; }
+</style>
+</head>
+<body>
+<main>
+
+  <!-- SCANNER MODE: one tap to enable audio, then every scan auto-plays -->
+  <section id="scanner" class="hidden">
+    <h1>Scan &amp; Play</h1>
+    <p id="intro">Tap once to allow audio and the camera. After that, every QR you scan plays automatically.</p>
+    <button id="start">Start</button>
+    <div id="reader"></div>
+    <p id="nowplaying"></p>
+    <audio id="saudio" controls></audio>
+  </section>
+
+  <!-- PLAYER MODE: fallback when a QR is opened by the phone's own camera app -->
+  <section id="player" class="hidden">
+    <h1>Now Playing</h1>
+    <p id="status">Tap to play</p>
+    <button id="play" style="width:120px;height:120px;border-radius:50%;font-size:2.6rem;margin:24px 0">▶</button>
+    <audio id="audio" controls preload="auto"></audio>
+    <iframe id="fallback" class="hidden" title="Drive player" width="100%" height="80" style="border:0;margin-top:12px"></iframe>
+  </section>
+
+  <!-- GENERATOR MODE -->
+  <section id="generator" class="hidden">
+    <h1>Drive Music → QR Code</h1>
+    <p>Paste the Drive share link of your audio file (shared as <b>Anyone with the link</b>).</p>
+    <input id="driveLink" placeholder="https://drive.google.com/file/d/…/view">
+    <button id="make">Generate QR</button>
+    <div id="qr"></div>
+    <p id="out" class="link"></p>
+    <button id="download" class="ghost hidden">Download PNG</button>
+    <p style="margin-top:28px"><a class="btn ghost" id="scanLink" href="?mode=scan">Open scanner</a></p>
+  </section>
+
+</main>
+<script>
+  const params = new URLSearchParams(location.search);
+  const fileId = params.get("id");
+  const mode = params.get("mode");
+  const $ = id => document.getElementById(id);
+  const show = id => $(id).classList.remove("hidden");
+  const src = id => "https://drive.google.com/uc?export=download&id=" + encodeURIComponent(id);
+  const SILENT = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
+
+  function extractId(text) {
+    text = (text || "").trim();
+    const m = text.match(/\/d\/([\w-]+)/) || text.match(/[?&]id=([\w-]+)/);
+    return m ? m[1] : (/^[\w-]{20,}$/.test(text) ? text : null);
+  }
+
+  if (mode === "scan") {
+    // ---------- SCANNER: unlock audio on the Start tap, then auto-play every scan ----------
+    show("scanner");
+    const audio = $("saudio"), label = $("nowplaying");
+    let lastId = null, qr = null;
+    audio.addEventListener("ended", () => { lastId = null; });
+    audio.addEventListener("error", () => {
+      if (audio.src.startsWith("data:")) return;
+      label.textContent = "Can't play this file. Check it is shared as 'Anyone with the link'.";
+      lastId = null;
+    });
+
+    $("start").addEventListener("click", async () => {
+      // This tap is the user gesture that unlocks audio on this element for the whole session.
+      audio.src = SILENT;
+      try { await audio.play(); } catch (e) {}
+      $("start").classList.add("hidden");
+      $("intro").textContent = "Point the camera at a music QR code.";
+      qr = new Html5Qrcode("reader");
+      try {
+        await qr.start({ facingMode: "environment" }, { fps: 10, qrbox: 240 }, text => {
+          const id = extractId(text);
+          if (!id || id === lastId) return;
+          lastId = id;
+          label.textContent = "Playing…";
+          audio.src = src(id);
+          audio.play().catch(() => { label.textContent = "Tap play on the player below."; });
+        }, () => {});
+      } catch (e) {
+        $("intro").textContent = "Camera not available. Allow camera access and reload.";
+        show("start");
+      }
+    });
+
+  } else if (fileId) {
+    // ---------- PLAYER: opened by the phone's own camera app ----------
+    show("player");
+    const audio = $("audio"), status = $("status"), btn = $("play"), frame = $("fallback");
+    audio.src = src(fileId);
+    function useFallback() {
+      audio.classList.add("hidden"); btn.classList.add("hidden");
+      status.textContent = "Press play below";
+      frame.src = "https://drive.google.com/file/d/" + encodeURIComponent(fileId) + "/preview";
+      frame.classList.remove("hidden");
+    }
+    audio.addEventListener("error", useFallback);
+    const start = () => audio.play().then(() => { status.textContent = "Playing…"; btn.textContent = "❚❚"; });
+    start().catch(() => { status.textContent = "Tap to play"; });
+    btn.addEventListener("click", () => {
+      if (audio.paused) start().catch(useFallback);
+      else { audio.pause(); btn.textContent = "▶"; status.textContent = "Paused"; }
+    });
+
+  } else {
+    // ---------- GENERATOR ----------
+    show("generator");
+    const qrBox = $("qr");
+    $("make").addEventListener("click", () => {
+      const id = extractId($("driveLink").value);
+      if (!id) { alert("Couldn't find a file ID in that link."); return; }
+      const url = location.origin + location.pathname + "?id=" + id;
+      qrBox.innerHTML = "";
+      new QRCode(qrBox, { text: url, width: 260, height: 260, colorDark: "#14213d", colorLight: "#ffffff" });
+      $("out").textContent = url;
+      $("download").classList.remove("hidden");
+    });
+    $("download").addEventListener("click", () => {
+      const a = document.createElement("a");
+      a.href = qrBox.querySelector("canvas").toDataURL("image/png");
+      a.download = "music-qr.png";
+      a.click();
+    });
+  }
+</script>
+</body>
+</html>
