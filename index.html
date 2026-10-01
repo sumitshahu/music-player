@@ -8,13 +8,38 @@
 <link rel="preconnect" href="https://drive.usercontent.google.com" crossorigin>
 <link rel="preconnect" href="https://drive.google.com" crossorigin>
 <script>
-  // Start fetching the audio immediately when opened from a QR link (?id=...)
-  const FILE_ID = new URLSearchParams(location.search).get("id");
-  const SRC1 = id => "https://drive.usercontent.google.com/download?id=" + encodeURIComponent(id) + "&export=download&confirm=t";
-  const SRC2 = id => "https://drive.google.com/uc?export=download&id=" + encodeURIComponent(id);
+  // ============ SETUP ============
+  // Google Drive API key. Makes Drive streaming reliable (see steps). Leave "" to try plain Drive links.
+  const API_KEY = "";
+  // ===============================
+  const driveUrls = id => {
+    const e = encodeURIComponent(id), u = [];
+    if (API_KEY) u.push("https://www.googleapis.com/drive/v3/files/" + e + "?alt=media&key=" + API_KEY);
+    u.push("https://drive.usercontent.google.com/download?id=" + e + "&export=download&confirm=t");
+    u.push("https://drive.google.com/uc?export=download&id=" + e);
+    return u;
+  };
+  // GitHub "blob" links are web pages, not audio. Convert them to the real file (Pages URL first, raw as backup).
+  const fileUrls = u => {
+    const g = u.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/(?:blob|raw)\/([^/]+)\/([^?#]+)/);
+    if (g) return ["https://" + g[1] + ".github.io/" + g[2] + "/" + g[4], "https://raw.githubusercontent.com/" + g[1] + "/" + g[2] + "/" + g[3] + "/" + g[4]];
+    return [new URL(u, location.href).href];
+  };
+  // Turns QR text (Drive link/ID, ?src=file, or an audio file/URL) into {key, urls[], drive}
+  function resolve(t) {
+    t = (t || "").trim();
+    let m = t.match(/[?&]src=([^&#]+)/);
+    if (m) { const u = decodeURIComponent(m[1]); return { key: u, urls: fileUrls(u) }; }
+    m = t.match(/\/d\/([\w-]+)/) || t.match(/[?&]id=([\w-]+)/) || (/^[\w-]{25,}$/.test(t) ? [0, t] : null);
+    if (m) return { key: m[1], urls: driveUrls(m[1]), drive: true };
+    if (/\.(mp3|m4a|aac|wav|ogg|opus|flac)(\?.*)?$/i.test(t)) return { key: t, urls: fileUrls(t) };
+    return null;
+  }
   const A = new Audio(); A.preload = "auto";
-  if (FILE_ID) { A.src = SRC1(FILE_ID); A.play().catch(() => {}); }
-  // Pre-load the fallback QR decoder while the page is idle (only if the browser has no native one)
+  // Opened from a QR link: start fetching the audio immediately
+  const FIRST = location.search ? resolve(location.search) : null;
+  if (FIRST) { A.src = FIRST.urls[0]; A.play().catch(() => {}); }
+  // Pre-load the fallback QR decoder while idle (only if the browser has no native one)
   const loadJsQR = () => window.jsQR ? Promise.resolve() : new Promise((ok, no) => {
     const s = document.createElement("script");
     s.src = "https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js";
@@ -115,26 +140,35 @@
   const im = new Image(); im.onload = () => { $("idle").textContent = ""; $("idle").appendChild(im); }; im.src = "deity.png";
 
   // ---------- Audio ----------
-  let lastId = null, curId = null, tried = 0;
-  function extractId(t) {
-    t = (t || "").trim();
-    const m = t.match(/\/d\/([\w-]+)/) || t.match(/[?&]id=([\w-]+)/);
-    return m ? m[1] : (/^[\w-]{20,}$/.test(t) ? t : null);
-  }
-  function play(id) {
-    curId = lastId = id; tried = 0;
-    A.src = SRC1(id); say("Loading…");
+  let lastKey = null, cur = null, tried = 0;
+  const silent = () => A.src.startsWith("data:");
+  function play(r) {
+    cur = r; lastKey = r.key; tried = 0;
+    A.src = r.urls[0]; say("Loading…");
     A.play().catch(() => {});
   }
-  A.addEventListener("playing", () => { say("🪔 Playing"); pp.textContent = "❚❚"; pp.classList.remove("hide"); });
-  A.addEventListener("pause", () => { if (!A.ended && !A.src.startsWith("data:")) pp.textContent = "▶"; });
-  A.addEventListener("waiting", () => say("Buffering…"));
-  A.addEventListener("ended", () => { lastId = null; pp.textContent = "▶"; say("Finished · scan another"); });
-  A.addEventListener("error", () => {
-    if (A.src.startsWith("data:") || !curId) return;
-    if (tried === 0) { tried = 1; A.src = SRC2(curId); A.play().catch(() => {}); return; }  // retry via the alternate Drive link
-    lastId = null; say("Can't play this file. Check it is shared as “Anyone with the link”.");
-  });
+  async function diagnose(r) {
+    say("Can't play this file…");
+    try {
+      const res = await fetch(r.urls[0], { headers: { Range: "bytes=0-0" } });
+      if (res.status === 400) return say("Drive API key is invalid. Check API_KEY in index.html.");
+      if (res.status === 403) return say("Drive refused (403). Share the file as “Anyone with the link” and check the key's website restriction.");
+      if (res.status === 404) return say("File not found. Check the link and its sharing.");
+      return say("Drive replied " + res.status + " but the browser can't play it. Is it an audio file?");
+    } catch (e) {
+      say(r.drive ? "Google blocks direct Drive playback without an API key. Add one in index.html (see setup steps)." : "Couldn't load that audio file. Check its path.");
+    }
+  }
+  A.addEventListener("playing", () => { if (silent()) return; say("🪔 Playing"); pp.textContent = "❚❚"; pp.classList.remove("hide"); });
+  A.addEventListener("pause", () => { if (!A.ended && !silent()) pp.textContent = "▶"; });
+  A.addEventListener("waiting", () => { if (!silent()) say("Buffering…"); });
+  A.addEventListener("ended", () => { if (silent()) return; lastKey = null; pp.textContent = "▶"; say("Finished · scan another"); });
+  function onError() {
+    if (silent() || !cur) return;
+    if (tried < cur.urls.length - 1) { A.src = cur.urls[++tried]; A.play().catch(() => {}); return; }  // try the next source
+    lastKey = null; diagnose(cur);
+  }
+  A.addEventListener("error", onError);
   pp.onclick = () => { A.paused ? A.play().catch(() => {}) : A.pause(); };
 
   // ---------- Scanner ----------
@@ -164,7 +198,7 @@
       catch (e) { say("Couldn't load the QR decoder. Check your connection."); return; }
     }
     running = true;
-    if (A.paused || !curId) say("Point the camera at a QR code");
+    if (A.paused || !cur) say("Point the camera at a QR code");
     tick();
   }
   async function tick() {
@@ -185,17 +219,18 @@
     setTimeout(tick, det ? 50 : 90);
   }
   function onCode(t) {
-    const id = extractId(t);
-    if (!id) { say("That QR isn't a music code"); return; }
-    if (id !== lastId) play(id);
+    const r = resolve(t);
+    if (!r) { say("That QR isn't a music code"); return; }
+    if (r.key !== lastKey) play(r);
   }
   startBtn.onclick = again.onclick = startScanner;
 
   // ---------- Mode ----------
-  if (FILE_ID) {          // opened from a QR link by the phone's camera app
-    curId = lastId = FILE_ID;
+  if (FIRST) {            // opened from a QR link by the phone's camera app
+    cur = FIRST; lastKey = FIRST.key; tried = 0;
     pp.classList.remove("hide"); again.classList.remove("hide"); say("Loading…");
     A.play().catch(() => say("Tap ▶ to play"));
+    if (A.error) onError();
   } else {                // default: built-in scanner
     startBtn.classList.remove("hide"); say("Tap Start, then scan a QR code");
   }
