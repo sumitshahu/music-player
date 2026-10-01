@@ -1,151 +1,203 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="hi">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>QR Music Player</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#2a0707">
+<title>भक्ति संगीत · Devotional Player</title>
+<link rel="preconnect" href="https://drive.usercontent.google.com" crossorigin>
+<link rel="preconnect" href="https://drive.google.com" crossorigin>
+<script>
+  // Start fetching the audio immediately when opened from a QR link (?id=...)
+  const FILE_ID = new URLSearchParams(location.search).get("id");
+  const SRC1 = id => "https://drive.usercontent.google.com/download?id=" + encodeURIComponent(id) + "&export=download&confirm=t";
+  const SRC2 = id => "https://drive.google.com/uc?export=download&id=" + encodeURIComponent(id);
+  const A = new Audio(); A.preload = "auto";
+  if (FILE_ID) { A.src = SRC1(FILE_ID); A.play().catch(() => {}); }
+  // Pre-load the fallback QR decoder while the page is idle (only if the browser has no native one)
+  const loadJsQR = () => window.jsQR ? Promise.resolve() : new Promise((ok, no) => {
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js";
+    s.onload = ok; s.onerror = no; document.head.appendChild(s);
+  });
+  const PRE = ("BarcodeDetector" in window) ? null : loadJsQR().catch(() => {});
+</script>
 <style>
-  :root { --navy:#14213d; --muted:#5b6478; --line:#d9deea; }
-  * { box-sizing:border-box; }
-  body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:#fff; color:var(--navy); display:flex; justify-content:center; padding:24px; }
-  main { width:100%; max-width:440px; text-align:center; }
-  h1 { font-size:1.4rem; margin:8px 0 4px; }
-  p { color:var(--muted); font-size:.92rem; line-height:1.5; }
-  input { width:100%; padding:12px; border:1px solid var(--line); border-radius:8px; font-size:1rem; margin:10px 0; color:var(--navy); }
-  button, a.btn { display:inline-block; background:var(--navy); color:#fff; border:0; border-radius:8px; padding:12px 22px; font-size:1rem; cursor:pointer; text-decoration:none; }
-  .ghost { background:#fff !important; color:var(--navy) !important; border:1px solid var(--navy) !important; }
-  #qr { display:flex; justify-content:center; margin:20px 0 10px; }
-  .hidden { display:none; }
-  .link { word-break:break-all; font-size:.8rem; }
-  #reader { width:100%; margin:16px 0; border-radius:10px; overflow:hidden; }
-  #nowplaying { font-weight:600; min-height:1.4em; }
-  audio { width:100%; margin-top:10px; }
+  :root { --gold:#f5c451; --gold2:#ffe3a3; --ink:#fff4dc; }
+  * { box-sizing:border-box; margin:0; }
+  body { min-height:100dvh; color:var(--ink); overflow-x:hidden;
+    font-family:"Noto Serif Devanagari","Kohinoor Devanagari","Nirmala UI","Mangal",Georgia,serif;
+    background:radial-gradient(120% 80% at 50% 108%,#c2570a 0%,#7a1d0a 35%,#3a0a08 65%,#1d0404 100%); }
+  #bg { position:fixed; inset:0; pointer-events:none; overflow:hidden; }
+  #mandala { position:absolute; left:50%; top:46%; width:min(150vmin,1000px); aspect-ratio:1; opacity:.3;
+    transform:translate(-50%,-50%); animation:spin 240s linear infinite; will-change:transform; }
+  #mandala svg { width:100%; height:100%; }
+  @keyframes spin { from{transform:translate(-50%,-50%) rotate(0)} to{transform:translate(-50%,-50%) rotate(360deg)} }
+  .ember { position:absolute; bottom:-12px; border-radius:50%; opacity:0; will-change:transform;
+    background:radial-gradient(circle,#ffd27a,#ff8a1f 60%,transparent 70%); animation:rise linear infinite; }
+  @keyframes rise { 0%{transform:translateY(0);opacity:0} 15%{opacity:.9} 100%{transform:translateY(-105vh) translateX(var(--dx));opacity:0} }
+  main { position:relative; max-width:440px; min-height:100dvh; margin:0 auto; padding:max(22px,env(safe-area-inset-top)) 20px 28px;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; text-align:center; }
+  .om { font-size:3.2rem; line-height:1; color:var(--gold); text-shadow:0 0 24px rgba(255,160,40,.85); animation:glow 4s ease-in-out infinite; }
+  @keyframes glow { 50%{text-shadow:0 0 38px rgba(255,190,70,1)} }
+  h1 { font-size:1.5rem; color:var(--gold2); text-shadow:0 0 18px rgba(255,170,60,.55); }
+  .sub { font-size:.9rem; color:#ffcf8a; }
+  #shlok { min-height:4.8em; font-size:1rem; line-height:1.75; color:#ffe9bd; white-space:pre-line; transition:opacity .8s; }
+  #frame { position:relative; width:min(76vw,290px); aspect-ratio:1; border-radius:24px; overflow:hidden; border:3px solid var(--gold);
+    box-shadow:0 0 0 6px rgba(245,196,81,.15),0 0 42px rgba(255,150,40,.45),inset 0 0 30px rgba(0,0,0,.5);
+    background:radial-gradient(circle,#6a1a0a,#2a0707); }
+  #cam { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:none; }
+  #idle { position:absolute; inset:0; display:grid; place-items:center; font-size:6rem; color:var(--gold); text-shadow:0 0 30px rgba(255,150,40,.9); }
+  #idle img { width:100%; height:100%; object-fit:cover; }
+  .scanning::after { content:""; position:absolute; left:8%; right:8%; height:2px; top:12%;
+    background:linear-gradient(90deg,transparent,var(--gold),transparent); animation:sweep 2.2s ease-in-out infinite; }
+  @keyframes sweep { 50%{top:88%} }
+  #status { min-height:1.5em; font-size:.95rem; color:#ffd9a0; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; justify-content:center; }
+  .btn { font:inherit; font-size:1.05rem; font-weight:700; padding:13px 30px; border:0; border-radius:999px; cursor:pointer;
+    color:#3a0a08; background:linear-gradient(180deg,#ffe3a3,#f5b93d); box-shadow:0 6px 22px rgba(255,150,40,.4); }
+  .btn.ghost { background:transparent; color:var(--gold2); border:1.5px solid var(--gold); box-shadow:none; }
+  .hide { display:none !important; }
+  @media (prefers-reduced-motion:reduce) { * { animation:none !important; } }
 </style>
 </head>
 <body>
+<div id="bg"><div id="mandala"></div></div>
 <main>
-
-  <!-- SCANNER MODE: one tap to enable audio, then every scan auto-plays -->
-  <section id="scanner" class="hidden">
-    <h1>Scan &amp; Play</h1>
-    <p id="intro">Tap once to allow audio and the camera. After that, every QR you scan plays automatically.</p>
-    <button id="start">Start</button>
-    <div id="reader"></div>
-    <p id="nowplaying"></p>
-    <audio id="saudio" controls></audio>
-  </section>
-
-  <!-- PLAYER MODE: fallback when a QR is opened by the phone's own camera app -->
-  <section id="player" class="hidden">
-    <h1>Now Playing</h1>
-    <p id="status">Tap to play</p>
-    <button id="play" style="width:120px;height:120px;border-radius:50%;font-size:2.6rem;margin:24px 0">▶</button>
-    <audio id="audio" controls preload="auto"></audio>
-    <iframe id="fallback" class="hidden" title="Drive player" width="100%" height="80" style="border:0;margin-top:12px"></iframe>
-  </section>
-
-  <!-- GENERATOR MODE -->
-  <section id="generator" class="hidden">
-    <h1>Drive Music → QR Code</h1>
-    <p>Paste the Drive share link of your audio file (shared as <b>Anyone with the link</b>).</p>
-    <input id="driveLink" placeholder="https://drive.google.com/file/d/…/view">
-    <button id="make">Generate QR</button>
-    <div id="qr"></div>
-    <p id="out" class="link"></p>
-    <button id="download" class="ghost hidden">Download PNG</button>
-    <p style="margin-top:28px"><a class="btn ghost" id="scanLink" href="?mode=scan">Open scanner</a></p>
-  </section>
-
+  <div class="om">ॐ</div>
+  <h1>॥ श्री गणेशाय नमः ॥</h1>
+  <p class="sub">ॐ गं गणपतये नमः · ॐ ऐं सरस्वत्यै नमः</p>
+  <p id="shlok"></p>
+  <div id="frame">
+    <video id="cam" muted playsinline></video>
+    <div id="idle">ॐ</div>
+  </div>
+  <p id="status"></p>
+  <div class="row">
+    <button class="btn hide" id="start">प्रारंभ करें · Start</button>
+    <button class="btn hide" id="pp">▶</button>
+    <button class="btn ghost hide" id="again">अगला स्कैन · Scan next</button>
+  </div>
 </main>
 <script>
-  const params = new URLSearchParams(location.search);
-  const fileId = params.get("id");
-  const mode = params.get("mode");
   const $ = id => document.getElementById(id);
-  const show = id => $(id).classList.remove("hidden");
-  const src = id => "https://drive.google.com/uc?export=download&id=" + encodeURIComponent(id);
   const SILENT = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
+  const SHLOKS = [
+    "वक्रतुण्ड महाकाय सूर्यकोटि समप्रभ ।\nनिर्विघ्नं कुरु मे देव सर्वकार्येषु सर्वदा ॥",
+    "सरस्वति नमस्तुभ्यं वरदे कामरूपिणि ।\nविद्यारम्भं करिष्यामि सिद्धिर्भवतु मे सदा ॥",
+    "ॐ भूर्भुवः स्वः । तत्सवितुर्वरेण्यं ।\nभर्गो देवस्य धीमहि । धियो यो नः प्रचोदयात् ॥"
+  ];
+  const st = $("status"), pp = $("pp"), startBtn = $("start"), again = $("again"), vid = $("cam"), frame = $("frame");
+  const say = t => { st.textContent = t; };
 
-  function extractId(text) {
-    text = (text || "").trim();
-    const m = text.match(/\/d\/([\w-]+)/) || text.match(/[?&]id=([\w-]+)/);
-    return m ? m[1] : (/^[\w-]{20,}$/.test(text) ? text : null);
-  }
-
-  if (mode === "scan") {
-    // ---------- SCANNER: unlock audio on the Start tap, then auto-play every scan ----------
-    show("scanner");
-    const audio = $("saudio"), label = $("nowplaying");
-    let lastId = null, qr = null;
-    audio.addEventListener("ended", () => { lastId = null; });
-    audio.addEventListener("error", () => {
-      if (audio.src.startsWith("data:")) return;
-      label.textContent = "Can't play this file. Check it is shared as 'Anyone with the link'.";
-      lastId = null;
+  // ---------- Devotional background: lotus mandala + rising embers ----------
+  (function () {
+    let g = "";
+    [[12,310,26,58],[18,240,18,44],[24,175,13,32],[36,115,8,22]].forEach(([n, r, rx, ry]) => {
+      for (let i = 0; i < n; i++) g += `<ellipse cx="0" cy="${-r}" rx="${rx}" ry="${ry}" transform="rotate(${i * 360 / n})"/>`;
     });
-
-    $("start").addEventListener("click", async () => {
-      // This tap is the user gesture that unlocks audio on this element for the whole session.
-      audio.src = SILENT;
-      try { await audio.play(); } catch (e) {}
-      $("start").classList.add("hidden");
-      $("intro").textContent = "Point the camera at a music QR code.";
-      qr = new Html5Qrcode("reader");
-      try {
-        await qr.start({ facingMode: "environment" }, { fps: 10, qrbox: 240 }, text => {
-          const id = extractId(text);
-          if (!id || id === lastId) return;
-          lastId = id;
-          label.textContent = "Playing…";
-          audio.src = src(id);
-          audio.play().catch(() => { label.textContent = "Tap play on the player below."; });
-        }, () => {});
-      } catch (e) {
-        $("intro").textContent = "Camera not available. Allow camera access and reload.";
-        show("start");
-      }
-    });
-
-  } else if (fileId) {
-    // ---------- PLAYER: opened by the phone's own camera app ----------
-    show("player");
-    const audio = $("audio"), status = $("status"), btn = $("play"), frame = $("fallback");
-    audio.src = src(fileId);
-    function useFallback() {
-      audio.classList.add("hidden"); btn.classList.add("hidden");
-      status.textContent = "Press play below";
-      frame.src = "https://drive.google.com/file/d/" + encodeURIComponent(fileId) + "/preview";
-      frame.classList.remove("hidden");
+    g += '<circle r="360"/><circle r="374"/><circle r="70"/>';
+    $("mandala").innerHTML = `<svg viewBox="-400 -400 800 800" fill="rgba(245,196,81,.06)" stroke="#f5c451" stroke-width="1.6">${g}</svg>`;
+    const bg = $("bg");
+    for (let i = 0; i < 14; i++) {
+      const d = document.createElement("i"), s = 3 + Math.random() * 5;
+      d.className = "ember";
+      d.style.cssText = `left:${Math.random() * 100}%;width:${s}px;height:${s}px;--dx:${(Math.random() * 80 - 40) | 0}px;animation-duration:${9 + Math.random() * 10}s;animation-delay:${-Math.random() * 14}s`;
+      bg.appendChild(d);
     }
-    audio.addEventListener("error", useFallback);
-    const start = () => audio.play().then(() => { status.textContent = "Playing…"; btn.textContent = "❚❚"; });
-    start().catch(() => { status.textContent = "Tap to play"; });
-    btn.addEventListener("click", () => {
-      if (audio.paused) start().catch(useFallback);
-      else { audio.pause(); btn.textContent = "▶"; status.textContent = "Paused"; }
-    });
+  })();
 
-  } else {
-    // ---------- GENERATOR ----------
-    show("generator");
-    const qrBox = $("qr");
-    $("make").addEventListener("click", () => {
-      const id = extractId($("driveLink").value);
-      if (!id) { alert("Couldn't find a file ID in that link."); return; }
-      const url = location.origin + location.pathname + "?id=" + id;
-      qrBox.innerHTML = "";
-      new QRCode(qrBox, { text: url, width: 260, height: 260, colorDark: "#14213d", colorLight: "#ffffff" });
-      $("out").textContent = url;
-      $("download").classList.remove("hidden");
-    });
-    $("download").addEventListener("click", () => {
-      const a = document.createElement("a");
-      a.href = qrBox.querySelector("canvas").toDataURL("image/png");
-      a.download = "music-qr.png";
-      a.click();
-    });
+  // ---------- Rotating shlok ----------
+  let si = 0; const sh = $("shlok"); sh.textContent = SHLOKS[0];
+  setInterval(() => { sh.style.opacity = 0; setTimeout(() => { si = (si + 1) % SHLOKS.length; sh.textContent = SHLOKS[si]; sh.style.opacity = 1; }, 800); }, 9000);
+
+  // Optional: put a deity picture named deity.png next to this file and it replaces the ॐ
+  const im = new Image(); im.onload = () => { $("idle").textContent = ""; $("idle").appendChild(im); }; im.src = "deity.png";
+
+  // ---------- Audio ----------
+  let lastId = null, curId = null, tried = 0;
+  function extractId(t) {
+    t = (t || "").trim();
+    const m = t.match(/\/d\/([\w-]+)/) || t.match(/[?&]id=([\w-]+)/);
+    return m ? m[1] : (/^[\w-]{20,}$/.test(t) ? t : null);
+  }
+  function play(id) {
+    curId = lastId = id; tried = 0;
+    A.src = SRC1(id); say("Loading…");
+    A.play().catch(() => {});
+  }
+  A.addEventListener("playing", () => { say("🪔 Playing"); pp.textContent = "❚❚"; pp.classList.remove("hide"); });
+  A.addEventListener("pause", () => { if (!A.ended && !A.src.startsWith("data:")) pp.textContent = "▶"; });
+  A.addEventListener("waiting", () => say("Buffering…"));
+  A.addEventListener("ended", () => { lastId = null; pp.textContent = "▶"; say("Finished · scan another"); });
+  A.addEventListener("error", () => {
+    if (A.src.startsWith("data:") || !curId) return;
+    if (tried === 0) { tried = 1; A.src = SRC2(curId); A.play().catch(() => {}); return; }  // retry via the alternate Drive link
+    lastId = null; say("Can't play this file. Check it is shared as “Anyone with the link”.");
+  });
+  pp.onclick = () => { A.paused ? A.play().catch(() => {}) : A.pause(); };
+
+  // ---------- Scanner ----------
+  let det = null, cv, cx, running = false;
+  async function startScanner() {
+    // This tap is the gesture that unlocks audio for the whole session
+    if (!A.src) A.src = SILENT;
+    A.play().catch(() => {});
+    startBtn.classList.add("hide"); again.classList.add("hide");
+    if (location.protocol === "http:" && location.hostname !== "localhost") { say("Camera needs https. Host this page on https."); startBtn.classList.remove("hide"); return; }
+    say("Starting camera…");
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+    } catch (e) { say("Camera blocked. Allow camera access and tap Start."); startBtn.classList.remove("hide"); return; }
+    vid.srcObject = stream;
+    try { await vid.play(); } catch (e) {}
+    vid.style.display = "block"; $("idle").classList.add("hide"); frame.classList.add("scanning");
+    try { stream.getVideoTracks()[0].applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {}); } catch (e) {}
+    try { navigator.wakeLock && navigator.wakeLock.request("screen").catch(() => {}); } catch (e) {}
+    try {
+      if ("BarcodeDetector" in window && (await BarcodeDetector.getSupportedFormats()).includes("qr_code"))
+        det = new BarcodeDetector({ formats: ["qr_code"] });
+    } catch (e) {}
+    if (!det) {
+      try { await (PRE || loadJsQR()); cv = document.createElement("canvas"); cx = cv.getContext("2d", { willReadFrequently: true }); }
+      catch (e) { say("Couldn't load the QR decoder. Check your connection."); return; }
+    }
+    running = true;
+    if (A.paused || !curId) say("Point the camera at a QR code");
+    tick();
+  }
+  async function tick() {
+    if (!running) return;
+    if (vid.readyState >= 2 && vid.videoWidth) {
+      try {
+        let t = null;
+        if (det) { const r = await det.detect(vid); if (r.length) t = r[0].rawValue; }
+        else {
+          const sc = Math.min(1, 800 / vid.videoWidth), w = (vid.videoWidth * sc) | 0, h = (vid.videoHeight * sc) | 0;
+          cv.width = w; cv.height = h; cx.drawImage(vid, 0, 0, w, h);
+          const c = jsQR(cx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: "dontInvert" });
+          if (c) t = c.data;
+        }
+        if (t) onCode(t);
+      } catch (e) {}
+    }
+    setTimeout(tick, det ? 50 : 90);
+  }
+  function onCode(t) {
+    const id = extractId(t);
+    if (!id) { say("That QR isn't a music code"); return; }
+    if (id !== lastId) play(id);
+  }
+  startBtn.onclick = again.onclick = startScanner;
+
+  // ---------- Mode ----------
+  if (FILE_ID) {          // opened from a QR link by the phone's camera app
+    curId = lastId = FILE_ID;
+    pp.classList.remove("hide"); again.classList.remove("hide"); say("Loading…");
+    A.play().catch(() => say("Tap ▶ to play"));
+  } else {                // default: built-in scanner
+    startBtn.classList.remove("hide"); say("Tap Start, then scan a QR code");
   }
 </script>
 </body>
