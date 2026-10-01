@@ -39,13 +39,20 @@
   // Opened from a QR link: start fetching the audio immediately
   const FIRST = location.search ? resolve(location.search) : null;
   if (FIRST) { A.src = FIRST.urls[0]; A.play().catch(() => {}); }
-  // Pre-load the fallback QR decoder while idle (only if the browser has no native one)
-  const loadJsQR = () => window.jsQR ? Promise.resolve() : new Promise((ok, no) => {
-    const s = document.createElement("script");
-    s.src = "https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js";
-    s.onload = ok; s.onerror = no; document.head.appendChild(s);
+  // QR decoder: jsQR.js sits next to this page (fast, same host); the CDN is only a backup.
+  const loadScript = (src, ms = 7000) => new Promise((ok, no) => {
+    const s = document.createElement("script"), t = setTimeout(() => no(new Error("timeout")), ms);
+    s.onload = () => { clearTimeout(t); ok(); };
+    s.onerror = () => { clearTimeout(t); no(new Error("load")); };
+    s.src = src; document.head.appendChild(s);
   });
-  const PRE = ("BarcodeDetector" in window) ? null : loadJsQR().catch(() => {});
+  const DECODER = (async () => {
+    if (window.jsQR) return true;
+    for (const u of ["jsQR.js", "https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"]) {
+      try { await loadScript(u); if (window.jsQR) return true; } catch (e) {}
+    }
+    return false;
+  })();
 </script>
 <style>
   :root { --gold:#f5c451; --gold2:#ffe3a3; --ink:#fff4dc; }
@@ -71,13 +78,14 @@
   #frame { position:relative; width:min(76vw,290px); aspect-ratio:1; border-radius:24px; overflow:hidden; border:3px solid var(--gold);
     box-shadow:0 0 0 6px rgba(245,196,81,.15),0 0 42px rgba(255,150,40,.45),inset 0 0 30px rgba(0,0,0,.5);
     background:radial-gradient(circle,#6a1a0a,#2a0707); }
-  #cam { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:none; }
-  #idle { position:absolute; inset:0; display:grid; place-items:center; font-size:6rem; color:var(--gold); text-shadow:0 0 30px rgba(255,150,40,.9); }
+  #cam { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:block; }
+  #idle { position:absolute; inset:0; background:radial-gradient(circle,#6a1a0a,#2a0707); display:grid; place-items:center; font-size:6rem; color:var(--gold); text-shadow:0 0 30px rgba(255,150,40,.9); }
   #idle img { width:100%; height:100%; object-fit:cover; }
   .scanning::after { content:""; position:absolute; left:8%; right:8%; height:2px; top:12%;
     background:linear-gradient(90deg,transparent,var(--gold),transparent); animation:sweep 2.2s ease-in-out infinite; }
   @keyframes sweep { 50%{top:88%} }
   #status { min-height:1.5em; font-size:.95rem; color:#ffd9a0; }
+  .dbg { min-height:1em; font-size:.72rem; color:#c9965a; }
   .row { display:flex; gap:12px; flex-wrap:wrap; justify-content:center; }
   .btn { font:inherit; font-size:1.05rem; font-weight:700; padding:13px 30px; border:0; border-radius:999px; cursor:pointer;
     color:#3a0a08; background:linear-gradient(180deg,#ffe3a3,#f5b93d); box-shadow:0 6px 22px rgba(255,150,40,.4); }
@@ -98,6 +106,7 @@
     <div id="idle">ॐ</div>
   </div>
   <p id="status"></p>
+  <p id="dbg" class="dbg"></p>
   <div class="row">
     <button class="btn hide" id="start">प्रारंभ करें · Start</button>
     <button class="btn hide" id="pp">▶</button>
@@ -171,52 +180,60 @@
   A.addEventListener("error", onError);
   pp.onclick = () => { A.paused ? A.play().catch(() => {}) : A.pause(); };
 
-  // ---------- Scanner ----------
-  let det = null, cv, cx, running = false;
+  // ---------- Scanner (jsQR runs the same on every browser) ----------
+  let running = false, cv, cx, gotFrame = false, t0 = 0;
+  const camError = e => ({
+    NotAllowedError: "Camera permission denied. Allow camera for this site, then tap Start.",
+    SecurityError: "Camera permission denied. Allow camera for this site, then tap Start.",
+    NotFoundError: "No camera found on this device.",
+    NotReadableError: "The camera is busy in another app. Close it and tap Start."
+  })[e && e.name] || "Couldn't open the camera (" + ((e && e.name) || "unknown") + ").";
+
   async function startScanner() {
-    // This tap is the gesture that unlocks audio for the whole session
-    if (!A.src) A.src = SILENT;
+    if (!A.src) A.src = SILENT;      // this tap unlocks audio for the whole session
     A.play().catch(() => {});
     startBtn.classList.add("hide"); again.classList.add("hide");
-    if (location.protocol === "http:" && location.hostname !== "localhost") { say("Camera needs https. Host this page on https."); startBtn.classList.remove("hide"); return; }
-    say("Starting camera…");
+    const fail = m => { say(m); startBtn.classList.remove("hide"); };
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)
+      return fail("This browser can't open the camera here. Open the page in Chrome or Safari over https.");
+    say("Allow the camera when asked…");
+    const warn = setTimeout(() => say("Waiting for camera permission… allow it, or enable Camera for this site in browser settings."), 7000);
     let stream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
-    } catch (e) { say("Camera blocked. Allow camera access and tap Start."); startBtn.classList.remove("hide"); return; }
-    vid.srcObject = stream;
-    try { await vid.play(); } catch (e) {}
-    vid.style.display = "block"; $("idle").classList.add("hide"); frame.classList.add("scanning");
+      try { stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false }); }
+      catch (e) {
+        if (e && (e.name === "OverconstrainedError" || e.name === "TypeError")) stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        else throw e;
+      }
+    } catch (e) { clearTimeout(warn); return fail(camError(e)); }
+    clearTimeout(warn);
+    say("Starting camera…");
+    vid.srcObject = stream; vid.play().catch(() => {});
+    $("idle").classList.add("hide"); frame.classList.add("scanning");
     try { stream.getVideoTracks()[0].applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {}); } catch (e) {}
     try { navigator.wakeLock && navigator.wakeLock.request("screen").catch(() => {}); } catch (e) {}
-    try {
-      if ("BarcodeDetector" in window && (await BarcodeDetector.getSupportedFormats()).includes("qr_code"))
-        det = new BarcodeDetector({ formats: ["qr_code"] });
-    } catch (e) {}
-    if (!det) {
-      try { await (PRE || loadJsQR()); cv = document.createElement("canvas"); cx = cv.getContext("2d", { willReadFrequently: true }); }
-      catch (e) { say("Couldn't load the QR decoder. Check your connection."); return; }
-    }
-    running = true;
-    if (A.paused || !cur) say("Point the camera at a QR code");
+    if (!(await DECODER)) return fail("Scanner file missing. Upload jsQR.js next to index.html, then reload.");
+    cv = cv || document.createElement("canvas"); cx = cx || cv.getContext("2d", { willReadFrequently: true });
+    running = true; gotFrame = false; t0 = Date.now();
     tick();
   }
-  async function tick() {
+  function tick() {
     if (!running) return;
     if (vid.readyState >= 2 && vid.videoWidth) {
-      try {
-        let t = null;
-        if (det) { const r = await det.detect(vid); if (r.length) t = r[0].rawValue; }
-        else {
-          const sc = Math.min(1, 800 / vid.videoWidth), w = (vid.videoWidth * sc) | 0, h = (vid.videoHeight * sc) | 0;
-          cv.width = w; cv.height = h; cx.drawImage(vid, 0, 0, w, h);
-          const c = jsQR(cx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: "dontInvert" });
-          if (c) t = c.data;
-        }
-        if (t) onCode(t);
-      } catch (e) {}
+      if (!gotFrame) {
+        gotFrame = true; $("dbg").textContent = "camera " + vid.videoWidth + "×" + vid.videoHeight;
+        if (A.paused || !cur) say("Point the camera at a QR code");
+      }
+      const sc = Math.min(1, 720 / vid.videoWidth), w = (vid.videoWidth * sc) | 0, h = (vid.videoHeight * sc) | 0;
+      if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+      cx.drawImage(vid, 0, 0, w, h);
+      let c = null;
+      try { c = jsQR(cx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: "dontInvert" }); } catch (e) {}
+      if (c && c.data) onCode(c.data);
+    } else if (!gotFrame && Date.now() - t0 > 6000) {
+      say("Camera opened but shows no video. Reload, close other camera apps and try again.");
     }
-    setTimeout(tick, det ? 50 : 90);
+    setTimeout(tick, 70);
   }
   function onCode(t) {
     const r = resolve(t);
