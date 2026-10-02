@@ -1,0 +1,14 @@
+{
+  "1": {
+    "title": "गणेश वंदना",
+    "audio": "songs/shlok_001.mp3",
+    "lyrics": "lyrics/shlok_001.lrc",
+    "image": "images/shlok_001.jpg"
+  },
+
+  "2": {
+    "title": "गुरु स्तुति",
+    "audio": "songs/shlok_002.mp3",
+    "image": "images/shlok_002.jpg"
+  }
+}

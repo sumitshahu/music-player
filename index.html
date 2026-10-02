@@ -28,17 +28,23 @@
   // Turns QR text (Drive link/ID, ?src=file, or an audio file/URL) into {key, urls[], drive}
   function resolve(t) {
     t = (t || "").trim();
+    const n = t.match(/(?:^|[?&])(?:s|id)=(\d{1,4})(?:[&#]|$)/) || t.match(/^(\d{1,4})$/);
+    if (n) return { key: "s" + +n[1], shlok: String(+n[1]) };
     let m = t.match(/[?&]src=([^&#]+)/);
     if (m) { const u = decodeURIComponent(m[1]); return { key: u, urls: fileUrls(u) }; }
     m = t.match(/\/d\/([\w-]+)/) || t.match(/[?&]id=([\w-]+)/) || (/^[\w-]{25,}$/.test(t) ? [0, t] : null);
     if (m) return { key: m[1], urls: driveUrls(m[1]), drive: true };
-    if (/\.(mp3|m4a|aac|wav|ogg|opus|flac|mpeg)(\?.*)?$/i.test(t)) return { key: t, urls: fileUrls(t) };
+    if (/\.(mp3|m4a|aac|wav|ogg|opus|flac)(\?.*)?$/i.test(t)) return { key: t, urls: fileUrls(t) };
     return null;
   }
   const A = new Audio(); A.preload = "auto";
   // Opened from a QR link: start fetching the audio immediately
   const FIRST = location.search ? resolve(location.search) : null;
-  if (FIRST) { A.src = FIRST.urls[0]; A.play().catch(() => {}); }
+  if (FIRST && FIRST.urls) { A.src = FIRST.urls[0]; A.play().catch(() => {}); }
+  // Song list: fetched at once; edits to page.json show up on the next load
+  let ORDER = [];
+  const DATA_P = fetch("page.json", { cache: "no-cache" }).then(r => r.json())
+    .then(d => { ORDER = Object.keys(d).sort((a, b) => a - b); return d; }).catch(() => null);
   // QR decoder: jsQR.js sits next to this page (fast, same host); the CDN is only a backup.
   const loadScript = (src, ms = 7000) => new Promise((ok, no) => {
     const s = document.createElement("script"), t = setTimeout(() => no(new Error("timeout")), ms);
@@ -73,8 +79,12 @@
   .om { font-size:3.2rem; line-height:1; color:var(--gold); text-shadow:0 0 24px rgba(255,160,40,.85); animation:glow 4s ease-in-out infinite; }
   @keyframes glow { 50%{text-shadow:0 0 38px rgba(255,190,70,1)} }
   h1 { font-size:1.5rem; color:var(--gold2); text-shadow:0 0 18px rgba(255,170,60,.55); }
-  .sub { font-size:.9rem; color:#ffcf8a; }
-  #shlok { min-height:4.8em; font-size:1rem; line-height:1.75; color:#ffe9bd; white-space:pre-line; transition:opacity .8s; }
+  #lyrics { position:relative; width:100%; max-height:8.8em; overflow-y:auto; scrollbar-width:none; font-size:1rem; line-height:1.7; color:rgba(255,233,189,.5);
+    -webkit-mask-image:linear-gradient(transparent,#000 16%,#000 84%,transparent); mask-image:linear-gradient(transparent,#000 16%,#000 84%,transparent); }
+  #lyrics::-webkit-scrollbar { display:none; }
+  #lyrics p { margin:.15em 0; padding:.1em 6px; cursor:pointer; transition:color .4s,font-size .3s,text-shadow .4s; }
+  #lyrics p.on, #lyrics.plain p { color:var(--gold2); }
+  #lyrics p.on { font-size:1.18em; text-shadow:0 0 14px rgba(255,170,60,.7); }
   #frame { position:relative; width:min(76vw,290px); aspect-ratio:1; border-radius:24px; overflow:hidden; border:3px solid var(--gold);
     box-shadow:0 0 0 6px rgba(245,196,81,.15),0 0 42px rgba(255,150,40,.45),inset 0 0 30px rgba(0,0,0,.5);
     background:radial-gradient(circle,#6a1a0a,#2a0707); }
@@ -100,6 +110,9 @@
   .btn { font:inherit; font-size:1.05rem; font-weight:700; padding:13px 30px; border:0; border-radius:999px; cursor:pointer;
     color:#3a0a08; background:linear-gradient(180deg,#ffe3a3,#f5b93d); box-shadow:0 6px 22px rgba(255,150,40,.4); }
   .btn.ghost { background:transparent; color:var(--gold2); border:1.5px solid var(--gold); box-shadow:none; }
+  .btn.round { width:52px; height:52px; padding:0; border-radius:50%; font-size:1.25rem; }
+  .btn.big { width:68px; height:68px; font-size:1.6rem; }
+  #ctrl { display:flex; gap:18px; align-items:center; }
   .hide { display:none !important; }
   @media (prefers-reduced-motion:reduce) { * { animation:none !important; } }
 </style>
@@ -108,9 +121,8 @@
 <div id="bg"><div id="mandala"></div></div>
 <main>
   <div class="om">ॐ</div>
-  <h1>॥ श्री गणेशाय नमः ॥</h1>
-  <p class="sub">ॐ गं गणपतये नमः · ॐ ऐं सरस्वत्यै नमः</p>
-  <p id="shlok"></p>
+  <h1 id="title">॥ श्री गणेशाय नमः ॥</h1>
+  <div id="lyrics" class="hide"></div>
   <div id="frame">
     <video id="cam" muted playsinline></video>
     <div id="idle">ॐ</div>
@@ -122,21 +134,17 @@
     <input id="seek" type="range" min="0" max="1000" step="1" value="0" aria-label="Seek" disabled>
     <span id="tdur">--:--</span>
   </div>
-  <div class="row">
-    <button class="btn hide" id="start">प्रारंभ करें · Start</button>
-    <button class="btn hide" id="pp">▶</button>
-    <button class="btn ghost hide" id="again">स्कैन करें · Scan</button>
+  <div id="ctrl" class="hide">
+    <button class="btn ghost round" id="prev" aria-label="Previous">⏮</button>
+    <button class="btn round big" id="pp" aria-label="Play or pause">▶</button>
+    <button class="btn ghost round" id="next" aria-label="Next">⏭</button>
   </div>
+  <button class="btn" id="scan">स्कैन करें · Scan</button>
 </main>
 <script>
   const $ = id => document.getElementById(id);
   const SILENT = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
-  const SHLOKS = [
-    "वक्रतुण्ड महाकाय सूर्यकोटि समप्रभ ।\nनिर्विघ्नं कुरु मे देव सर्वकार्येषु सर्वदा ॥",
-    "सरस्वति नमस्तुभ्यं वरदे कामरूपिणि ।\nविद्यारम्भं करिष्यामि सिद्धिर्भवतु मे सदा ॥",
-    "ॐ भूर्भुवः स्वः । तत्सवितुर्वरेण्यं ।\nभर्गो देवस्य धीमहि । धियो यो नः प्रचोदयात् ॥"
-  ];
-  const st = $("status"), pp = $("pp"), startBtn = $("start"), again = $("again"), vid = $("cam"), frame = $("frame");
+  const st = $("status"), pp = $("pp"), scanBtn = $("scan"), vid = $("cam"), frame = $("frame");
   const say = t => { st.textContent = t; };
 
   // ---------- Devotional background: lotus mandala + rising embers ----------
@@ -156,22 +164,80 @@
     }
   })();
 
-  // ---------- Rotating shlok ----------
-  let si = 0; const sh = $("shlok"); sh.textContent = SHLOKS[0];
-  setInterval(() => { sh.style.opacity = 0; setTimeout(() => { si = (si + 1) % SHLOKS.length; sh.textContent = SHLOKS[si]; sh.style.opacity = 1; }, 800); }, 9000);
-
-  // Optional: put a deity picture named deity.png next to this file and it replaces the ॐ
-  const im = new Image(); im.onload = () => { $("idle").textContent = ""; $("idle").appendChild(im); }; im.src = "deity.png";
-
   // ---------- Audio ----------
   let lastKey = null, cur = null, tried = 0;
   const silent = () => A.src.startsWith("data:");
-  function play(r) {
-    cur = r; lastKey = r.key; tried = 0;
-    A.src = r.urls[0]; say("Loading…");
-    $("scrub").classList.remove("hide"); paintSeek();
-    A.play().catch(() => {});
+  const TITLE0 = $("title").textContent;
+  let artTok = 0, lTok = 0, L = [], li = -1;
+  const counter = () => cur && cur.shlok ? "🪔 " + (ORDER.indexOf(cur.shlok) + 1) + " / " + ORDER.length : "";
+  function showCtrl() {
+    $("ctrl").classList.remove("hide"); $("scrub").classList.remove("hide");
+    const nav = cur && cur.shlok ? "visible" : "hidden";
+    $("prev").style.visibility = $("next").style.visibility = nav; paintSeek();
   }
+  function setArt(u) {                      // image goes where the camera view is
+    const idle = $("idle"), k = ++artTok; idle.textContent = "ॐ";
+    if (!u) return;
+    const im = new Image(); im.alt = "";
+    im.onload = () => { if (k === artTok) { idle.textContent = ""; idle.appendChild(im); } };
+    im.src = u;
+  }
+  function parseLrc(txt) {
+    let out = [], timed = false;
+    txt.replace(/^\uFEFF/, "").split(/\r?\n/).forEach(line => {
+      const tags = [...line.matchAll(/\[(\d+):(\d+(?:\.\d+)?)\]/g)], t = line.replace(/\[[^\]]*\]/g, "").trim();
+      if (!t) return;
+      if (tags.length) { timed = true; tags.forEach(m => out.push({ s: +m[1] * 60 + +m[2], t })); }
+      else if (!/^\[/.test(line.trim())) out.push({ s: null, t });
+    });
+    if (timed) out = out.filter(l => l.s != null).sort((a, b) => a.s - b.s);
+    return out;
+  }
+  async function loadLyrics(u) {
+    const k = ++lTok, box = $("lyrics"); L = []; li = -1; box.innerHTML = ""; box.className = "hide";
+    if (!u) return;
+    try { const r = await fetch(u); if (!r.ok) return; const l = parseLrc(await r.text()); if (k !== lTok) return; L = l; } catch (e) { return; }
+    if (!L.length) return;
+    L.forEach(l => { const p = document.createElement("p"); p.textContent = l.t; p.onclick = () => { if (l.s != null && isFinite(A.duration)) A.currentTime = l.s; }; box.appendChild(p); });
+    box.className = L[0].s == null ? "plain" : ""; syncLyrics(true);
+  }
+  function syncLyrics(force) {
+    if (!L.length || L[0].s == null) return;
+    const t = A.currentTime + 0.15; let i = -1;
+    for (let k = 0; k < L.length && L[k].s <= t; k++) i = k;
+    if (i === li && !force) return; li = i;
+    const box = $("lyrics"), ps = box.children;
+    for (let k = 0; k < ps.length; k++) ps[k].classList.toggle("on", k === i);
+    const el = ps[Math.max(i, 0)];
+    if (el) box.scrollTo({ top: el.offsetTop - box.clientHeight / 2 + el.clientHeight / 2, behavior: "smooth" });
+  }
+  function showSong(it) {                   // title, picture, lyrics, lock-screen info
+    $("title").textContent = it ? it.title : TITLE0;
+    setArt(it && it.image); loadLyrics(it && it.lyrics);
+    if (!scanning) $("dbg").textContent = counter();
+    if ("mediaSession" in navigator) navigator.mediaSession.metadata = it ? new MediaMetadata({ title: it.title, artist: "भक्ति संगीत",
+      artwork: it.image ? [{ src: new URL(it.image, location.href).href }] : [] }) : null;
+  }
+  const blocked = e => { if (e && e.name === "NotAllowedError") say("Tap ▶ to play"); };
+  function begin(r, it) {
+    cur = r; lastKey = r.key; tried = 0; showSong(it);
+    A.loop = true;                          // always replay
+    A.src = r.urls[0]; say("Loading…"); showCtrl();
+    A.play().catch(blocked);
+  }
+  function play(r) { if (r.shlok) return playShlok(r.shlok); begin(r, null); }
+  async function playShlok(n) {
+    const d = await DATA_P, it = d && d[n];
+    if (!it || !it.audio) { say("Shlok " + n + " isn't in page.json"); lastKey = null; return; }
+    begin({ key: "s" + n, shlok: String(n), urls: fileUrls(it.audio) }, it);
+  }
+  const step = d => {
+    if (!cur || !cur.shlok || !ORDER.length) return;
+    playShlok(ORDER[(ORDER.indexOf(cur.shlok) + d + ORDER.length) % ORDER.length]);
+  };
+  $("next").onclick = () => step(1); $("prev").onclick = () => step(-1);
+  if ("mediaSession" in navigator) [["play", () => A.play()], ["pause", () => A.pause()], ["nexttrack", () => step(1)], ["previoustrack", () => step(-1)]]
+    .forEach(([a, f]) => { try { navigator.mediaSession.setActionHandler(a, f); } catch (e) {} });
   async function diagnose(r) {
     say("Can't play this file…");
     try {
@@ -208,6 +274,7 @@
     seek.style.setProperty("--p", (seek.value / 10) + "%");
     tcur.textContent = fmt(ok && dragging ? (seek.value / 1000) * d : A.currentTime);
     tdur.textContent = ok ? fmt(d) : "--:--";
+    syncLyrics();
   }
   ["timeupdate", "durationchange", "loadedmetadata", "seeked", "emptied"].forEach(ev => A.addEventListener(ev, paintSeek));
   seek.addEventListener("pointerdown", () => { dragging = true; });
@@ -222,7 +289,7 @@
   seek.addEventListener("pointercancel", () => { dragging = false; paintSeek(); });
 
   // ---------- Scanner (jsQR runs the same on every browser) ----------
-  let running = false, cv, cx, gotFrame = false, t0 = 0, camStream = null, wakeLock = null;
+  let running = false, cv, cx, gotFrame = false, t0 = 0, camStream = null, wakeLock = null, scanning = false;
   const camError = e => ({
     NotAllowedError: "Camera permission denied. Allow camera for this site, then tap Start.",
     SecurityError: "Camera permission denied. Allow camera for this site, then tap Start.",
@@ -230,11 +297,12 @@
     NotReadableError: "The camera is busy in another app. Close it and tap Start."
   })[e && e.name] || "Couldn't open the camera (" + ((e && e.name) || "unknown") + ").";
 
+  const setScanBtn = on => { scanning = on; scanBtn.textContent = on ? "रोकें · Stop scan" : "स्कैन करें · Scan"; };
   async function startScanner() {
-    if (!A.src) A.src = SILENT;      // this tap unlocks audio for the whole session
+    if (!A.src) { A.loop = false; A.src = SILENT; }   // this tap unlocks audio for the whole session
     A.play().catch(() => {});
-    startBtn.classList.add("hide"); again.classList.add("hide");
-    const fail = m => { say(m); startBtn.classList.remove("hide"); };
+    setScanBtn(true);
+    const fail = m => { stopScanner(); say(m); };
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)
       return fail("This browser can't open the camera here. Open the page in Chrome or Safari over https.");
     say("Allow the camera when asked…");
@@ -248,26 +316,26 @@
       }
     } catch (e) { clearTimeout(warn); return fail(camError(e)); }
     clearTimeout(warn);
-    camStream = stream;
-    say("Starting camera…");
+    if (!scanning) { stream.getTracks().forEach(t => t.stop()); return; }   // user tapped Stop while waiting
+    camStream = stream; say("Starting camera…");
     vid.srcObject = stream; vid.play().catch(() => {});
     $("idle").classList.add("hide"); frame.classList.add("scanning");
     try { stream.getVideoTracks()[0].applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {}); } catch (e) {}
     try { navigator.wakeLock && navigator.wakeLock.request("screen").then(l => { wakeLock = l; }).catch(() => {}); } catch (e) {}
     if (!(await DECODER)) return fail("Scanner file missing. Upload jsQR.js next to index.html, then reload.");
+    if (!scanning) return;
     cv = cv || document.createElement("canvas"); cx = cx || cv.getContext("2d", { willReadFrequently: true });
     running = true; gotFrame = false; t0 = Date.now();
     tick();
   }
-  function stopScanner() {
-    running = false;
+  function stopScanner() {                  // camera off, picture back
+    running = false; setScanBtn(false);
     if (camStream) { camStream.getTracks().forEach(t => t.stop()); camStream = null; }
     vid.srcObject = null;
     try { wakeLock && wakeLock.release().catch(() => {}); } catch (e) {}
     wakeLock = null;
     frame.classList.remove("scanning"); $("idle").classList.remove("hide");
-    $("dbg").textContent = "";
-    startBtn.classList.add("hide"); again.classList.remove("hide");
+    $("dbg").textContent = counter();
   }
   function tick() {
     if (!running) return;
@@ -293,17 +361,16 @@
     if (r.key !== lastKey) play(r);
     stopScanner();               // got a code: turn the camera off until the user taps Scan again
   }
-  startBtn.onclick = again.onclick = startScanner;
+  scanBtn.onclick = () => {
+    if (!scanning) return startScanner();
+    stopScanner();                          // user tapped Stop: picture back, status reset
+    say(!cur ? "Tap Scan, then point at a QR code" : A.paused ? "Paused" : "🪔 Playing");
+  };
 
   // ---------- Mode ----------
-  if (FIRST) {            // opened from a QR link by the phone's camera app
-    cur = FIRST; lastKey = FIRST.key; tried = 0;
-    pp.classList.remove("hide"); again.classList.remove("hide"); $("scrub").classList.remove("hide"); paintSeek(); say("Loading…");
-    A.play().catch(() => say("Tap ▶ to play"));
-    if (A.error) onError();
-  } else {                // default: built-in scanner
-    startBtn.classList.remove("hide"); say("Tap Start, then scan a QR code");
-  }
+  if (FIRST && FIRST.shlok) playShlok(FIRST.shlok);      // opened from a QR by the phone's camera app
+  else if (FIRST) { begin(FIRST, null); if (A.error) onError(); }
+  else say("Tap Scan, then point at a QR code");
 </script>
 </body>
 </html>
