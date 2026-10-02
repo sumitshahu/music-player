@@ -28,7 +28,7 @@
   // Turns QR text (Drive link/ID, ?src=file, or an audio file/URL) into {key, urls[], drive}
   function resolve(t) {
     t = (t || "").trim();
-    const n = t.match(/(?:^|[?&])(?:s|id)=(\d{1,4})(?:[&#]|$)/) || t.match(/^(\d{1,4})$/);
+    const n = t.match(/(?:^|[?&])(?:s|id)=(?:shlok_0*)?(\d{1,4})(?:[&#]|$)/) || t.match(/^(?:shlok_0*)?(\d{1,4})$/i);
     if (n) return { key: "s" + +n[1], shlok: String(+n[1]) };
     let m = t.match(/[?&]src=([^&#]+)/);
     if (m) { const u = decodeURIComponent(m[1]); return { key: u, urls: fileUrls(u) }; }
@@ -140,6 +140,7 @@
     <button class="btn ghost round" id="next" aria-label="Next">⏭</button>
   </div>
   <button class="btn" id="scan">स्कैन करें · Scan</button>
+  <p id="ver" class="dbg">v3</p>
 </main>
 <script>
   const $ = id => document.getElementById(id);
@@ -230,7 +231,16 @@
     A.src = r.urls[0]; say("Loading…"); showCtrl();
     A.play().catch(blocked);
   }
-  function play(r) { if (r.shlok) return playShlok(r.shlok); begin(r, null); }
+  async function matchEntry(url) {
+    const d = await DATA_P; if (!d) return null;
+    const stem = u => decodeURI(u.split(/[?#]/)[0].split("/").pop()).replace(/\.\w+$/, "").toLowerCase(), want = stem(url);
+    return Object.keys(d).find(k => d[k].audio && stem(d[k].audio) === want) || null;
+  }
+  async function play(r) {
+    if (r.shlok) return playShlok(r.shlok);
+    if (!r.drive) { const k = await matchEntry(r.urls[0]); if (k) return playShlok(k); }
+    begin(r, null);
+  }
   async function playShlok(n) {
     const d = await DATA_P, it = d && d[n];
     if (!it || !it.audio) { say("Shlok " + n + " isn't in page.json"); lastKey = null; return; }
@@ -374,8 +384,9 @@
   };
 
   // ---------- Mode ----------
+  DATA_P.then(d => { $("ver").textContent = "v3 · " + (d ? ORDER.length + " shloks loaded" : "page.json NOT loaded: check it is valid JSON"); });
   if (FIRST && FIRST.shlok) playShlok(FIRST.shlok);      // opened from a QR by the phone's camera app
-  else if (FIRST) { begin(FIRST, null); if (A.error) onError(); }
+  else if (FIRST) { play(FIRST).then(() => { if (A.error) onError(); }); }
   else say("Tap Scan, then point at a QR code");
 </script>
 </body>
