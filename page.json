@@ -7,8 +7,9 @@
   },
 
   "2": {
-    "title": "गुरु स्तुति",
+    "title": "सरस्वती वंदना",
     "audio": "songs/shlok_002.mp3",
+    "lyrics": "lyrics/shlok_002.lrc",
     "image": "images/shlok_002.jpg"
   }
 }
