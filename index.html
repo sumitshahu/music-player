@@ -34,7 +34,7 @@
     if (m) { const u = decodeURIComponent(m[1]); return { key: u, urls: fileUrls(u) }; }
     m = t.match(/\/d\/([\w-]+)/) || t.match(/[?&]id=([\w-]+)/) || (/^[\w-]{25,}$/.test(t) ? [0, t] : null);
     if (m) return { key: m[1], urls: driveUrls(m[1]), drive: true };
-    if (/\.(mp3|m4a|aac|wav|ogg|opus|flac|mpeg)(\?.*)?$/i.test(t)) return { key: t, urls: fileUrls(t) };
+    if (/\.(mp3|m4a|aac|wav|ogg|opus|flac)(\?.*)?$/i.test(t)) return { key: t, urls: fileUrls(t) };
     return null;
   }
   const A = new Audio(); A.preload = "auto";
@@ -168,6 +168,9 @@
   let lastKey = null, cur = null, tried = 0;
   const silent = () => A.src.startsWith("data:");
   const TITLE0 = $("title").textContent;
+  // If page.json says .mp3 but the file is .mpeg (or .jpg vs .jpeg), try the other common extensions
+  const alts = (p, exts) => { const m = p.match(/^(.*)\.(\w+)(\?.*)?$/); return m ? exts.filter(e => e !== m[2].toLowerCase()).map(e => m[1] + "." + e) : []; };
+  const note = m => { $("dbg").textContent = counter() + " · " + m; };
   let artTok = 0, lTok = 0, L = [], li = -1;
   const counter = () => cur && cur.shlok ? "🪔 " + (ORDER.indexOf(cur.shlok) + 1) + " / " + ORDER.length : "";
   function showCtrl() {
@@ -178,9 +181,11 @@
   function setArt(u) {                      // image goes where the camera view is
     const idle = $("idle"), k = ++artTok; idle.textContent = "ॐ";
     if (!u) return;
+    const list = [u, ...alts(u, ["jpg", "jpeg", "png", "webp"])]; let i = 0;
     const im = new Image(); im.alt = "";
     im.onload = () => { if (k === artTok) { idle.textContent = ""; idle.appendChild(im); } };
-    im.src = u;
+    im.onerror = () => { if (k !== artTok) return; if (++i < list.length) im.src = list[i]; else note("image not found: " + u); };
+    im.src = list[0];
   }
   function parseLrc(txt) {
     let out = [], timed = false;
@@ -196,8 +201,8 @@
   async function loadLyrics(u) {
     const k = ++lTok, box = $("lyrics"); L = []; li = -1; box.innerHTML = ""; box.className = "hide";
     if (!u) return;
-    try { const r = await fetch(u); if (!r.ok) return; const l = parseLrc(await r.text()); if (k !== lTok) return; L = l; } catch (e) { return; }
-    if (!L.length) return;
+    try { const r = await fetch(u); if (!r.ok) { if (k === lTok) note("lyrics file not found: " + u); return; } const l = parseLrc(await r.text()); if (k !== lTok) return; L = l; } catch (e) { return; }
+    if (!L.length) { note("lyrics file has no readable lines"); return; }
     L.forEach(l => { const p = document.createElement("p"); p.textContent = l.t; p.onclick = () => { if (l.s != null && isFinite(A.duration)) A.currentTime = l.s; }; box.appendChild(p); });
     box.className = L[0].s == null ? "plain" : ""; syncLyrics(true);
   }
@@ -229,7 +234,8 @@
   async function playShlok(n) {
     const d = await DATA_P, it = d && d[n];
     if (!it || !it.audio) { say("Shlok " + n + " isn't in page.json"); lastKey = null; return; }
-    begin({ key: "s" + n, shlok: String(n), urls: fileUrls(it.audio) }, it);
+    const u = fileUrls(it.audio);
+    begin({ key: "s" + n, shlok: String(n), urls: [...u, ...alts(u[0], ["mp3", "mpeg", "mpg", "m4a", "wav", "ogg"])] }, it);
   }
   const step = d => {
     if (!cur || !cur.shlok || !ORDER.length) return;
@@ -244,7 +250,7 @@
       const res = await fetch(r.urls[0], { headers: { Range: "bytes=0-0" } });
       if (res.status === 400) return say("Drive API key is invalid. Check API_KEY in index.html.");
       if (res.status === 403) return say("Drive refused (403). Share the file as “Anyone with the link” and check the key's website restriction.");
-      if (res.status === 404) return say("File not found. Check the link and its sharing.");
+      if (res.status === 404) return say(r.drive ? "File not found. Check the link and its sharing." : "Audio file not found: " + decodeURI(r.urls[0].split("/").slice(-2).join("/")) + ". Check the name and extension in page.json.");
       return say("Drive replied " + res.status + " but the browser can't play it. Is it an audio file?");
     } catch (e) {
       say(r.drive ? "Google blocks direct Drive playback without an API key. Add one in index.html (see setup steps)." : "Couldn't load that audio file. Check its path.");
