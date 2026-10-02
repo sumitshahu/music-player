@@ -185,7 +185,7 @@
     const list = [u, ...alts(u, ["jpg", "jpeg", "png", "webp"])]; let i = 0;
     const im = new Image(); im.alt = "";
     im.onload = () => { if (k === artTok) { idle.textContent = ""; idle.appendChild(im); } };
-    im.onerror = () => { if (k !== artTok) return; if (++i < list.length) im.src = list[i]; else note("image not found: " + u); };
+    im.onerror = () => { if (k !== artTok) return; if (++i < list.length) im.src = list[i]; else note("" + u); };
     im.src = list[0];
   }
   function parseLrc(txt) {
@@ -384,7 +384,7 @@
   };
 
   // ---------- Mode ----------
-  DATA_P.then(d => { $("ver").textContent = "v3 · " + (d ? ORDER.length + " shloks loaded" : "page.json NOT loaded: check it is valid JSON"); });
+  DATA_P.then(d => { $("ver").textContent = "· " + (d ? ORDER.length + " shloks loaded" : "page.json NOT loaded: check it is valid JSON"); });
   if (FIRST && FIRST.shlok) playShlok(FIRST.shlok);      // opened from a QR by the phone's camera app
   else if (FIRST) { play(FIRST).then(() => { if (A.error) onError(); }); }
   else say("Tap Scan, then point at a QR code");
